@@ -1,45 +1,57 @@
+/*
+ * Parallelization of the calculation of pi through the 
+ * calculation of an integral using rectangle rule.
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include "mpi.h"
 
-double rect_int(int n_subd, int rank){
-    double val = 0.0;
-    double step = 1.0/n_subd;
+/*
+ *	Returns the value of the integral calculated over 
+ *	the interval allocated to a node using n_subd rectangles.
+ */
+double rect_int(int n_subd, int rank, int size){
+	unsigned int i;
+    double x, val = 0.0;
+    double step = 1.0/(size*n_subd);
+    
+    for(i=0; i<n_subd; ++i){
+    	//compute x
+       	x = i*step+(step/2.0)+step*rank*n_subd;
+    	//compute f(x)
+    	val += (1.0/(1.0+pow(x,2)))*step;
+    }
 
-    double x = step*rank+(step/2.0);
-    val = (1.0/(1.0+pow(x,2)))*step;
-    //printf("P%d -> %f\n", rank,  val);
     return val;
 }
 
 int main(int argc, char **argv){
-    int rank, size=-1;
-    double tmp_pi, pi, err, rpi=3.141592653589793238462643;
+    int rank, size, n_subd;
+    double tmp_pi, pi, err, pi_gt=3.141592653589793238462643;
 
     MPI_Status status;
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    if( argc < 2 ) {
-        printf("Usage\n");
-        printf("  Arg1 = number of subdivisions / unkowns\n");
-        return -1;
-    }
+	if(argc != 2){
+		printf("Usage: %s <subdivision cnt>\n", argv[0]);
+		exit(-1);
+	}
 
-    size = atoi(argv[1]);
+    n_subd = atoi(argv[1]);
 
     MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    
-    tmp_pi = rect_int(size,rank);
-
+    tmp_pi = rect_int(n_subd, rank, size);
     MPI_Reduce(&tmp_pi, &pi, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     
     if(rank==0){
         pi*=4.0;
-        err=fabs(rpi-pi);
-        printf("Pi=%f, err=%f\n", pi, err);
+        err=fabs(pi_gt-pi);
+        printf("Pi~=%lf, err=%lf\n", pi, err);
     }
     MPI_Finalize();
 
