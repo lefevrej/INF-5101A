@@ -5,16 +5,14 @@
 #include "mpi.h"
 
 int matrix_pload(char* name, int N, int rank, int size, double *tab){
-    printf("matrix_pload: P%d\n", rank);
     MPI_Status status;
     FILE *f;
     unsigned int i, j;
-    int stride = 1, msgtag = 1, block_h = N/size;
-    double val, *tmp_tab;
+    int block_h = N/size;
+    double *tmp_tab;
     
 	if(rank==0){
 		if((f = fopen (name, "r")) == NULL) { perror ("matrix_pload : fopen "); }
-
         if ((tmp_tab = malloc(N*block_h * sizeof(double))) == NULL){
             printf("Can't malloc tmp_tab\n");
             exit(-1);
@@ -49,7 +47,6 @@ int matrix_pload(char* name, int N, int rank, int size, double *tab){
 }
 
 void matrix_psave(char* name, int N, int rank, int size, double *tab) {
-    printf("matrix_psave: P%d\n", rank);
 	FILE *f;
 	int i,j; 
 	double *tmp_tab;
@@ -57,7 +54,7 @@ void matrix_psave(char* name, int N, int rank, int size, double *tab) {
 	
 	if(rank==0)
 		if((f = fopen (name, "w+")) == NULL){ perror("matrix_psave : fopen "); } 
-  	for (i=0; i<N/size; i++) {
+  	for (i=0; i<size; i++) {
   		if(rank==0){			
   			if(i==0){
   				tmp_tab = &tab[N];
@@ -74,8 +71,6 @@ void matrix_psave(char* name, int N, int rank, int size, double *tab) {
 			//close file
 	  		if(i==N-1){
 	  			fclose(f);
-	  			printf("==> Close file\n");
-	  			fflush(0);
 	  		}	  			
   		}else{
   			if(rank==i){
@@ -116,7 +111,9 @@ double laplace(int rank, int size, int N, double *tab, double *tmp_tab){
 }
 
 void do_work(int rank, int size, int N, char *name){
-    double *tab, *tmp_tab, err,  g_err;
+    double *tab, *tmp_tab, err,  g_err, tmp_gerr, conv=0.0001;
+    struct timeval tv1, tv2;	/* for timing */
+	int duree1, duree2;
 
     if( (tab = malloc((N * (N/size+2)) * sizeof(double))) == NULL ){
         printf("Can't malloc blabla\n");
@@ -133,17 +130,27 @@ void do_work(int rank, int size, int N, char *name){
             tab[shift+i]=-1.0;
     }
 
+    gettimeofday( &tv1, (struct timezone*)0 );
     matrix_pload(name, N, rank, size, tab);
-
-    //print_matrix(rank, size, N, tab, tmp_tab);
-    double conv = 1;    
+    gettimeofday( &tv2, (struct timezone*)0 );
+	duree1 = (tv2.tv_sec - tv1.tv_sec) * 1000000 + tv2.tv_usec - tv1.tv_usec;
     
+    gettimeofday( &tv1, (struct timezone*)0 );
     do{
+        tmp_gerr=g_err;
         err=laplace(rank, size, N, tab, tmp_tab);
         MPI_Allreduce(&err, &g_err, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    }while( sqrt(g_err)>conv );
+        g_err=sqrt(g_err);
+    }while( fabs(g_err-tmp_gerr)>conv );
+    gettimeofday( &tv2, (struct timezone*)0 );
+	duree2 = (tv2.tv_sec - tv1.tv_sec) * 1000000 + tv2.tv_usec - tv1.tv_usec;
 
-    sprintf ( name+strlen(name), ".result" );
+    if(rank==0){
+        sprintf(name+strlen(name), ".result" );
+        printf("loading time: %10.8f sec.\n", duree1/1000000.0 );		
+		printf ("computation time: %10.8f sec.\n", duree2/1000000.0 );
+        fflush(0);
+    }
     matrix_psave(name, N, rank, size, tab);
 
     free(tab);
@@ -152,6 +159,7 @@ void do_work(int rank, int size, int N, char *name){
 
 int main(int argc, char **argv){
     int rank, size, N;
+    double conv;
     char name[255];
     MPI_Status status;
     
@@ -166,6 +174,12 @@ int main(int argc, char **argv){
 
     N = atoi(argv[1]);
     strcpy(name, argv[2]);
+
+    if(N%size!=0){
+		N=N-(N%size);
+        if(rank==0)
+		    printf("Number of processor incompatible with the number of line. New number of lines: %d\n",N-(N%size));
+	}
 
     do_work(rank, size, N, name);
     
