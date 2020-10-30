@@ -1,0 +1,176 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include "mpi.h"
+
+int matrix_pload(char* name, int N, int rank, int size, double *tab){
+    printf("matrix_pload: P%d\n", rank);
+    MPI_Status status;
+    FILE *f;
+    unsigned int i, j;
+    int stride = 1, msgtag = 1, block_h = N/size;
+    double val, *tmp_tab;
+    
+	if(rank==0){
+		if((f = fopen (name, "r")) == NULL) { perror ("matrix_pload : fopen "); }
+
+        if ((tmp_tab = malloc(N*block_h * sizeof(double))) == NULL){
+            printf("Can't malloc tmp_tab\n");
+            exit(-1);
+        }
+
+		for (i=0; i<size; i++) {
+    		for (j=0; j<N*block_h; j++)
+      			fscanf(f, "%lf", &tmp_tab[j]);
+            if(i==0)
+                memcpy(&tab[N], tmp_tab, N*block_h*sizeof(double));
+            else	
+                MPI_Send(tmp_tab, N*block_h, MPI_DOUBLE, i, 99, MPI_COMM_WORLD);
+  		}
+  		fclose(f);
+        free(tmp_tab);
+    }
+    if(rank!=0)
+        MPI_Recv(&tab[N], N*block_h, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &status);	
+    
+    if(rank<size-1){
+        //send last line to next processor
+        MPI_Send(&tab[N*(N/size)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD);
+        //receive first line of next processor
+        MPI_Recv(&tab[(N)*(N/size+1)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD, &status);
+    }
+    if(rank>0){
+        //send first line to the previous processor
+        MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
+        //receive last line from previous processor
+        MPI_Recv(tab, N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD, &status);
+    }
+}
+
+void matrix_psave(char* name, int N, int rank, int size, double *tab) {
+    printf("matrix_psave: P%d\n", rank);
+	FILE *f;
+	int i,j; 
+	double *tmp_tab;
+    MPI_Status status;
+	
+	if(rank==0)
+		if((f = fopen (name, "w+")) == NULL){ perror("matrix_psave : fopen "); } 
+  	for (i=0; i<N/size; i++) {
+  		if(rank==0){			
+  			if(i==0){
+  				tmp_tab = &tab[N];
+  			} else {
+  				fflush(0);
+                MPI_Recv(tmp_tab, (N/size)*N, MPI_DOUBLE, i, 99, MPI_COMM_WORLD, &status);
+  			}
+			for (j=0; j<(N/size)*N; j++) {
+                if(j%N==0&& i+j!=0)
+			        fprintf(f, "\n");
+	  			fprintf(f,"%8.2f ",tmp_tab[j]);
+			}
+			
+			//close file
+	  		if(i==N-1){
+	  			fclose(f);
+	  			printf("==> Close file\n");
+	  			fflush(0);
+	  		}	  			
+  		}else{
+  			if(rank==i){
+                MPI_Send(&tab[N], (N/size)*N, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
+			}
+		}	
+	} 
+}
+
+void print_matrix(int rank, int size, int N, double *tab){
+    printf("-----[P%d]-----\n", rank);
+    for (int i=0; i<(N / size+2); i++) {
+        for (int j=0; j<N; j++) {
+            printf("%5.2f ", tab[i*N+j]);
+        }    	
+        printf("\n");
+    }
+    printf("-------------\n");
+}
+
+double laplace(int rank, int size, int N, double *tab, double *tmp_tab){
+    double err=0.0;
+    int offset_t = rank==0 ? 1 : 0;
+    int offset_b = rank==size-1 ? 1 : 0;
+
+    for(int i=1+offset_t; i<N/size+1-offset_b; ++i)
+        for(int j=1; j<N-1; ++j){
+            tmp_tab[(i-1)*N+j]=0.25*(tab[(i+1)*N+j]+tab[(i-1)*N+j]
+            +tab[i*N+(j+1)]+tab[i*N+(j-1)]);
+            err+=powf(tmp_tab[(i-1)*N+j]-tmp_tab[i*N+j], 1);
+        }
+
+    for(int i=1+offset_t; i<N/size+1-offset_b; ++i)
+        for(int j=1; j<N-1; ++j)
+            tab[i*N+j] = tmp_tab[(i-1)*N+j];
+
+    return err;
+}
+
+void do_work(int rank, int size, int N, char *name){
+    double *tab, *tmp_tab, err,  g_err;
+
+    if( (tab = malloc((N * (N/size+2)) * sizeof(double))) == NULL ){
+        printf("Can't malloc blabla\n");
+        exit(-1);
+    }
+    if( (tmp_tab = malloc((N * (N/size)) * sizeof(double))) == NULL ){
+        printf("Can't malloc blabla\n");
+        exit(-1);
+    }
+
+    if(rank==0 || rank==size-1){
+        int shift = rank==0 ? 0 : (N/size+1)*N;
+        for(int i=0; i<N; ++i)
+            tab[shift+i]=-1.0;
+    }
+
+    matrix_pload(name, N, rank, size, tab);
+
+    //print_matrix(rank, size, N, tab, tmp_tab);
+    double conv = 1;    
+    
+    do{
+        err=laplace(rank, size, N, tab, tmp_tab);
+        MPI_Allreduce(&err, &g_err, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }while( sqrt(g_err)>conv );
+
+    sprintf ( name+strlen(name), ".result" );
+    matrix_psave(name, N, rank, size, tab);
+
+    free(tab);
+    free(tmp_tab);
+}
+
+int main(int argc, char **argv){
+    int rank, size, N;
+    char name[255];
+    MPI_Status status;
+    
+    if(argc != 3){
+		printf("Usage: %s <N> <filename>\n", argv[0]);
+		exit(-1);
+	}
+
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    N = atoi(argv[1]);
+    strcpy(name, argv[2]);
+
+    do_work(rank, size, N, name);
+    
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Finalize();
+
+    return 0;
+}
