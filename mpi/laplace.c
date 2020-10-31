@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include "mpi.h"
 
-#define CONV 0.1
+double CONV;
 
 void matrix_pload(char* name, int N, int rank, int size, double *tab){
     MPI_Status status;
@@ -23,7 +23,10 @@ void matrix_pload(char* name, int N, int rank, int size, double *tab){
 
 		for (i=0; i<size; i++) {
     		for (j=0; j<N*block_h; j++)
-      			if(fscanf(f, "%lf", &tmp_tab[j])!=1) perror("matrix_pload: bad read");
+      			if(fscanf(f, "%lf", &tmp_tab[j])<0){
+					perror("matrix_pload: bad read");
+					exit(-1);
+				}
             if(i==0)
                 memcpy(&tab[N], tmp_tab, N*block_h*sizeof(double));
             else	
@@ -84,17 +87,6 @@ void send_overlap(int N, int rank, int size, double *tab){
         //send first line to the previous processor
         MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
     }
-}
-
-void print_matrix(int rank, int size, int N, double *tab){
-    printf("-----[P%d]-----\n", rank);
-    for (int i=0; i<(N / size+2); i++) {
-        for (int j=0; j<N; j++) {
-            printf("%5.2f ", tab[i*N+j]);
-        }    	
-        printf("\n");
-    }
-    printf("-------------\n");
 }
 
 double laplace(int rank, int size, int N, double *tab, double *tmp_tab){
@@ -170,8 +162,8 @@ int main(int argc, char **argv){
     int rank, size, N;
     char name[255];
     
-    if(argc != 3){
-		printf("Usage: %s <N> <filename>\n", argv[0]);
+    if(argc != 4){
+		printf("Usage: %s <N> <filename> <convergence>\n", argv[0]);
 		exit(-1);
 	}
 
@@ -181,6 +173,7 @@ int main(int argc, char **argv){
 
     N = atoi(argv[1]);
     strcpy(name, argv[2]);
+    CONV = atof(argv[3]);
 
     if(N%size!=0){
 		N=N-(N%size);

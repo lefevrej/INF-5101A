@@ -4,13 +4,13 @@
 #include <math.h>
 #include "mpi.h"
 
-int matrix_pload(char* name, int N, int rank, int size, double *tab){
+void matrix_pload(char* name, int N, int rank, int size, double *tab){
     printf("matrix_pload: P%d\n", rank);
     MPI_Status status;
     FILE *f;
     unsigned int i, j;
-    int stride = 1, msgtag = 1, block_h = N/size;
-    double val, *tmp_tab;
+    int block_h = N/size;
+    double *tmp_tab;
     
 	if(rank==0){
 		if((f = fopen (name, "r")) == NULL) { perror ("matrix_pload : fopen "); }
@@ -46,6 +46,40 @@ int matrix_pload(char* name, int N, int rank, int size, double *tab){
         //receive last line from previous processor
         MPI_Recv(tab, N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD, &status);
     }
+}
+
+void matrix_psave(char* name, int N, int rank, int size, double *tab) {
+	FILE *f;
+	int i,j; 
+	double *tmp_tab;
+    MPI_Status status;
+	
+	if(rank==0)
+		if((f = fopen (name, "w+")) == NULL){ perror("matrix_psave : fopen "); } 
+  	for (i=0; i<size; i++) {
+  		if(rank==0){			
+  			if(i==0){
+  				tmp_tab = &tab[N];
+  			} else {
+  				fflush(0);
+                MPI_Recv(tmp_tab, (N/size)*N, MPI_DOUBLE, i, 99, MPI_COMM_WORLD, &status);
+  			}
+			for (j=0; j<(N/size)*N; j++) {
+                if(j%N==0 && i+j!=0)
+			        fprintf(f, "\n");
+	  			fprintf(f,"%8.2f ",tmp_tab[j]);
+			}
+			
+			//close file
+	  		if(i==N-1){
+	  			fclose(f);
+	  		}	  			
+  		}else{
+  			if(rank==i){
+                MPI_Send(&tab[N], (N/size)*N, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
+			}
+		}	
+	} 
 }
 
 void print_matrix(int rank, int size, int N, double *tab){
@@ -84,6 +118,8 @@ int main(int argc, char **argv){
     }
 
     matrix_pload(name, N, rank, size, tab);
+    sprintf(name+strlen(name), ".result" );
+    matrix_psave(name, N, rank, size, tab);
 
     print_matrix(rank, size, N, tab);
     MPI_Barrier(MPI_COMM_WORLD);
