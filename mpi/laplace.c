@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include "mpi.h"
 
-#define CONV 0.0001
+#define CONV 0.1
 
 void matrix_pload(char* name, int N, int rank, int size, double *tab){
     MPI_Status status;
@@ -79,10 +79,10 @@ void send_overlap(int N, int rank, int size, double *tab){
         MPI_Recv(&tab[(N)*(N/size+1)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD, &status);
     }
     if(rank>0){
-        //send first line to the previous processor
-        MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
         //receive last line from previous processor
         MPI_Recv(tab, N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD, &status);
+        //send first line to the previous processor
+        MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
     }
 }
 
