@@ -11,7 +11,7 @@ length=${#MAT[@]}
 #test on //
 
 for (( i = 0; i < length; i++ )); do
-	echo "------------- Benchmark for m${MAT[i]} -------------\n" > ${ODIR}/bench_m${MAT[i]}
+	echo "------------- Benchmark for m${MAT[i]} -------------" > ${ODIR}/bench_m${MAT[i]}
 	echo "" >> ${ODIR}/bench_m${MAT[i]}
 	for p in 2 4 8 12 16 20; do
 		if [ ${p} -lt ${MAT[i]} -o ${p} -eq ${MAT[i]} ]; then

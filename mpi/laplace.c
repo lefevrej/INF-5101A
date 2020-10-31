@@ -2,9 +2,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <sys/types.h>
 #include "mpi.h"
 
-int matrix_pload(char* name, int N, int rank, int size, double *tab){
+#define CONV 0.0001
+
+void matrix_pload(char* name, int N, int rank, int size, double *tab){
     MPI_Status status;
     FILE *f;
     unsigned int i, j;
@@ -20,7 +23,7 @@ int matrix_pload(char* name, int N, int rank, int size, double *tab){
 
 		for (i=0; i<size; i++) {
     		for (j=0; j<N*block_h; j++)
-      			fscanf(f, "%lf", &tmp_tab[j]);
+      			if(fscanf(f, "%lf", &tmp_tab[j])!=1) perror("matrix_pload: bad read");
             if(i==0)
                 memcpy(&tab[N], tmp_tab, N*block_h*sizeof(double));
             else	
@@ -31,19 +34,6 @@ int matrix_pload(char* name, int N, int rank, int size, double *tab){
     }
     if(rank!=0)
         MPI_Recv(&tab[N], N*block_h, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &status);	
-    
-    if(rank<size-1){
-        //send last line to next processor
-        MPI_Send(&tab[N*(N/size)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD);
-        //receive first line of next processor
-        MPI_Recv(&tab[(N)*(N/size+1)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD, &status);
-    }
-    if(rank>0){
-        //send first line to the previous processor
-        MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
-        //receive last line from previous processor
-        MPI_Recv(tab, N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD, &status);
-    }
 }
 
 void matrix_psave(char* name, int N, int rank, int size, double *tab) {
@@ -63,8 +53,7 @@ void matrix_psave(char* name, int N, int rank, int size, double *tab) {
                 MPI_Recv(tmp_tab, (N/size)*N, MPI_DOUBLE, i, 99, MPI_COMM_WORLD, &status);
   			}
 			for (j=0; j<(N/size)*N; j++) {
-                if(j%N==0&& i+j!=0)
-			        fprintf(f, "\n");
+                if(j%N==0&& i+j!=0) fprintf(f, "\n");
 	  			fprintf(f,"%8.2f ",tmp_tab[j]);
 			}
 			
@@ -80,6 +69,23 @@ void matrix_psave(char* name, int N, int rank, int size, double *tab) {
 	} 
 }
 
+void send_overlap(int N, int rank, int size, double *tab){
+    MPI_Status status;
+
+    if(rank<size-1){
+        //send last line to next processor
+        MPI_Send(&tab[N*(N/size)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD);
+        //receive first line of next processor
+        MPI_Recv(&tab[(N)*(N/size+1)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD, &status);
+    }
+    if(rank>0){
+        //send first line to the previous processor
+        MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
+        //receive last line from previous processor
+        MPI_Recv(tab, N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD, &status);
+    }
+}
+
 void print_matrix(int rank, int size, int N, double *tab){
     printf("-----[P%d]-----\n", rank);
     for (int i=0; i<(N / size+2); i++) {
@@ -93,6 +99,7 @@ void print_matrix(int rank, int size, int N, double *tab){
 
 double laplace(int rank, int size, int N, double *tab, double *tmp_tab){
     double err=0.0;
+    //offset for first and last line
     int offset_t = rank==0 ? 1 : 0;
     int offset_b = rank==size-1 ? 1 : 0;
 
@@ -100,18 +107,18 @@ double laplace(int rank, int size, int N, double *tab, double *tmp_tab){
         for(int j=1; j<N-1; ++j){
             tmp_tab[(i-1)*N+j]=0.25*(tab[(i+1)*N+j]+tab[(i-1)*N+j]
             +tab[i*N+(j+1)]+tab[i*N+(j-1)]);
-            err+=powf(tmp_tab[(i-1)*N+j]-tmp_tab[i*N+j], 1);
+            err+=powf(tmp_tab[(i-1)*N+j]-tab[i*N+j], 2);
         }
 
+    
     for(int i=1+offset_t; i<N/size+1-offset_b; ++i)
         for(int j=1; j<N-1; ++j)
             tab[i*N+j] = tmp_tab[(i-1)*N+j];
-
     return err;
 }
 
 void do_work(int rank, int size, int N, char *name){
-    double *tab, *tmp_tab, err,  g_err, tmp_gerr, conv=0.0001;
+    double *tab, *tmp_tab, err,  g_err, tmp_gerr;
     struct timeval tv1, tv2;	/* for timing */
 	int duree1, duree2;
 
@@ -137,11 +144,13 @@ void do_work(int rank, int size, int N, char *name){
     
     gettimeofday( &tv1, (struct timezone*)0 );
     do{
+        send_overlap( N, rank, size, tab);
+
         tmp_gerr=g_err;
         err=laplace(rank, size, N, tab, tmp_tab);
         MPI_Allreduce(&err, &g_err, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         g_err=sqrt(g_err);
-    }while( fabs(g_err-tmp_gerr)>conv );
+    }while( fabs(g_err-tmp_gerr)>CONV );
     gettimeofday( &tv2, (struct timezone*)0 );
 	duree2 = (tv2.tv_sec - tv1.tv_sec) * 1000000 + tv2.tv_usec - tv1.tv_usec;
 
@@ -159,9 +168,7 @@ void do_work(int rank, int size, int N, char *name){
 
 int main(int argc, char **argv){
     int rank, size, N;
-    double conv;
     char name[255];
-    MPI_Status status;
     
     if(argc != 3){
 		printf("Usage: %s <N> <filename>\n", argv[0]);
