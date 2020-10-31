@@ -1,3 +1,13 @@
+/*
+ * This program makes it possible to obtain an approximate solution of the
+ * Laplace equation by parallelizing the calculation.
+ *---------------------------------------------------------------------------------------------------
+ * compile : mpicc -Wall -O3 -o laplace laplace.c -lm
+ *
+ *---------------------------------------------------------------------------------------------------
+ * auteur : Josselin Lefevre 10/2020
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -5,13 +15,11 @@
 #include <sys/types.h>
 #include "mpi.h"
 
-double CONV;
-
 void matrix_pload(char* name, int N, int rank, int size, double *tab){
     MPI_Status status;
     FILE *f;
     unsigned int i, j;
-    int block_h = N/size;
+    int block_h = N/size; //number of lines for each proc
     double *tmp_tab;
     
 	if(rank==0){
@@ -72,9 +80,14 @@ void matrix_psave(char* name, int N, int rank, int size, double *tab) {
 	} 
 }
 
+/**
+ * Sending of recoverement lines. You have to pay attention to the order 
+ * of "send" and "receive" to avoid deadlocks.
+ */
 void send_overlap(int N, int rank, int size, double *tab){
     MPI_Status status;
 
+    if(size==1) return;
     if(rank<size-1){
         //send last line to next processor
         MPI_Send(&tab[N*(N/size)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD);
@@ -109,9 +122,9 @@ double laplace(int rank, int size, int N, double *tab, double *tmp_tab){
     return err;
 }
 
-void do_work(int rank, int size, int N, char *name){
+void do_work(int rank, int size, int N, char *name, double CONV){
     double *tab, *tmp_tab, err,  g_err, tmp_gerr;
-    struct timeval tv1, tv2;	/* for timing */
+    struct timeval tv1, tv2: //for timing 
 	int duree1, duree2;
 
     if( (tab = malloc((N * (N/size+2)) * sizeof(double))) == NULL ){
@@ -160,6 +173,7 @@ void do_work(int rank, int size, int N, char *name){
 
 int main(int argc, char **argv){
     int rank, size, N;
+    double CONV;
     char name[255];
     
     if(argc != 4){
@@ -181,7 +195,7 @@ int main(int argc, char **argv){
 		    printf("Number of processor incompatible with the number of line. New number of lines: %d\n",N-(N%size));
 	}
 
-    do_work(rank, size, N, name);
+    do_work(rank, size, N, name, CONV);
     
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
