@@ -6,7 +6,7 @@
  * compile : mpicc -Wall -O3 -o data_par data_par.c -lm
  *
  *---------------------------------------------------------------------------------------------------
- * auteur : Josselin Lefevre 10/2020
+ * author : Josselin Lefevre 10/2020
  */
 
 #include <stdlib.h>

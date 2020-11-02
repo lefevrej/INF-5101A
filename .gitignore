@@ -1,3 +1,4 @@
 *_old*
 bin/
-benchmark/
+benchmark*
+images/
