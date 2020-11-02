@@ -124,7 +124,7 @@ double laplace(int rank, int size, int N, double *tab, double *tmp_tab){
 
 void do_work(int rank, int size, int N, char *name, double CONV){
     double *tab, *tmp_tab, err,  g_err, tmp_gerr;
-    struct timeval tv1, tv2: //for timing 
+    struct timeval tv1, tv2; //for timing 
 	int duree1, duree2;
 
     if( (tab = malloc((N * (N/size+2)) * sizeof(double))) == NULL ){
