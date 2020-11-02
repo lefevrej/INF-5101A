@@ -1,3 +1,14 @@
+/*
+ * Reading then communication of data to nodes. The original matrix is broken down into blocks of lines.
+ * Each node gets N/size lines. We also want each node to have access to the first row of the
+ * next node and the last row of the previous node. That's why we communicate overlap lines
+ *---------------------------------------------------------------------------------------------------
+ * compile : mpicc -Wall -O3 -o data_par data_par.c -lm
+ *
+ *---------------------------------------------------------------------------------------------------
+ * auteur : Josselin Lefevre 10/2020
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -5,7 +16,6 @@
 #include "mpi.h"
 
 void matrix_pload(char* name, int N, int rank, int size, double *tab){
-    printf("matrix_pload: P%d\n", rank);
     MPI_Status status;
     FILE *f;
     unsigned int i, j;
@@ -22,7 +32,10 @@ void matrix_pload(char* name, int N, int rank, int size, double *tab){
 
 		for (i=0; i<size; i++) {
     		for (j=0; j<N*block_h; j++)
-      			fscanf(f, "%lf", &tmp_tab[j]);
+      			if(fscanf(f, "%lf", &tmp_tab[j])<0){
+					perror("matrix_pload: bad read");
+					exit(-1);
+				}
             if(i==0)
                 memcpy(&tab[N], tmp_tab, N*block_h*sizeof(double));
             else	
@@ -33,19 +46,6 @@ void matrix_pload(char* name, int N, int rank, int size, double *tab){
     }
     if(rank!=0)
         MPI_Recv(&tab[N], N*block_h, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &status);	
-    
-    if(rank<size-1){
-        //send last line to next processor
-        MPI_Send(&tab[N*(N/size)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD);
-        //receive first line of next processor
-        MPI_Recv(&tab[(N)*(N/size+1)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD, &status);
-    }
-    if(rank>0){
-        //send first line to the previous processor
-        MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
-        //receive last line from previous processor
-        MPI_Recv(tab, N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD, &status);
-    }
 }
 
 void matrix_psave(char* name, int N, int rank, int size, double *tab) {
@@ -65,28 +65,46 @@ void matrix_psave(char* name, int N, int rank, int size, double *tab) {
                 MPI_Recv(tmp_tab, (N/size)*N, MPI_DOUBLE, i, 99, MPI_COMM_WORLD, &status);
   			}
 			for (j=0; j<(N/size)*N; j++) {
-                if(j%N==0 && i+j!=0)
-			        fprintf(f, "\n");
+                if(j%N==0 && i+j!=0) fprintf(f, "\n");
 	  			fprintf(f,"%8.2f ",tmp_tab[j]);
 			}
 			
 			//close file
-	  		if(i==N-1){
-	  			fclose(f);
-	  		}	  			
+	  		if(i==N-1) fclose(f);	
   		}else{
-  			if(rank==i){
+  			if(rank==i)
                 MPI_Send(&tab[N], (N/size)*N, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
-			}
 		}	
 	} 
 }
 
-void print_matrix(int rank, int size, int N, double *tab){
+/**
+ * Sending of overlap lines. You have to pay attention to the order 
+ * of "send" and "receive" to avoid deadlocks.
+ */
+void send_overlap(int N, int rank, int size, double *tab){
+    MPI_Status status;
+
+    if(size==1) return;
+    if(rank<size-1){
+        //send last line to next processor
+        MPI_Send(&tab[N*(N/size)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD);
+        //receive first line of next processor
+        MPI_Recv(&tab[(N)*(N/size+1)], N, MPI_DOUBLE, rank+1, 99, MPI_COMM_WORLD, &status);
+    }
+    if(rank>0){
+        //receive last line from previous processor
+        MPI_Recv(tab, N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD, &status);
+        //send first line to the previous processor
+        MPI_Send(&tab[N], N, MPI_DOUBLE, rank-1, 99, MPI_COMM_WORLD);
+    }
+}
+
+void print_matrix(int rank, int rs, int cs, double *tab){
     printf("-----[P%d]-----\n", rank);
-    for (int i=0; i<(N / size+2); i++) {
-        for (int j=0; j<N; j++) {
-            printf("%5.2f ", tab[i*N+j]);
+    for (int i=0; i<cs; i++) {
+        for (int j=0; j<rs; j++) {
+            printf("%5.2f ", tab[i*rs+j]);
         }    	
         printf("\n");
     }
@@ -94,7 +112,7 @@ void print_matrix(int rank, int size, int N, double *tab){
 }
 
 int main(int argc, char **argv){
-    int rank, size, N;
+    int rank, size, N, tmp;
     char name[255];
     double *tab;
     MPI_Status status;
@@ -106,7 +124,6 @@ int main(int argc, char **argv){
 		printf("Usage: %s <N> <filename>\n", argv[0]);
 		exit(-1);
 	}
-    printf("size=%d\n", size);
 
     N = atoi(argv[1]);
     strcpy(name, argv[2]);
@@ -118,10 +135,27 @@ int main(int argc, char **argv){
     }
 
     matrix_pload(name, N, rank, size, tab);
+    send_overlap(N, rank, size, tab);
+    //print matrix for each node properly
+    if(size==1) print_matrix(rank, N, N/size+2, tab);
+    else{
+        if(rank==0){
+            print_matrix(rank, N, N/size+2, tab);
+            fflush(0);
+            MPI_Send(&size, 1, MPI_INT, rank+1, 99, MPI_COMM_WORLD);
+        } else {
+            MPI_Recv(&tmp, 1, MPI_INT, rank-1, 99, MPI_COMM_WORLD, &status);
+            print_matrix(rank, N, N/size+2, tab);
+            fflush(0);
+            if(rank<size-1)
+                MPI_Send(&size, 1, MPI_INT, rank+1, 99, MPI_COMM_WORLD);
+        }
+    }
+
+    //save lines, output file should be identical to input
     sprintf(name+strlen(name), ".result" );
     matrix_psave(name, N, rank, size, tab);
 
-    print_matrix(rank, size, N, tab);
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
     free(tab);

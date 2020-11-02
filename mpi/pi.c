@@ -1,6 +1,11 @@
 /*
  * Parallelization of the calculation of pi through the 
  * calculation of an integral using rectangle rule.
+ *---------------------------------------------------------------------------------------------------
+ * compile : mpicc -Wall -O3 -o pi pi.c -lm
+ *
+ *---------------------------------------------------------------------------------------------------
+ * author : Josselin Lefevre 10/2020
  */
 
 #include <stdlib.h>
@@ -41,9 +46,9 @@ int main(int argc, char **argv){
 		exit(-1);
 	}
 
-    n_subd = atoi(argv[1]);
+    if(rank==0) n_subd = atoi(argv[1]);
 
-    MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&n_subd, 1, MPI_INT, 0, MPI_COMM_WORLD);
     tmp_pi = rect_int(n_subd, rank, size);
     MPI_Reduce(&tmp_pi, &pi, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     

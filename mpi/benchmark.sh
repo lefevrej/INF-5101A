@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [[ $# -eq 0 ]]; then
-    echo "Usage: $0 <convergence_value>"
+	echo "Usage: $0 <convergence_value>"
 	exit 1
 fi
 
@@ -9,7 +9,7 @@ fi
 DDIR=../../data #path to data
 BDIR=./bin #path to binaries
 ODIR=./benchmark_$1 #output directory
-MAT=(4 16 500) #1000 5000 10000)
+MAT=(4 16 500 1000 5000 10000)
 length=${#MAT[@]}
 
 mkdir -p ${ODIR} 
@@ -27,8 +27,8 @@ for (( i = 0; i < length; i++ )); do
 		if [ ${p} -lt ${MAT[i]} -o ${p} -eq ${MAT[i]} ]; then
 			echo "---------------- nb-proc: ${p} -----------------" >> ${ODIR}/bench_m${MAT[i]}
 			echo  >> ${ODIR}/bench_m${MAT[i]}
-  			echo "mpirun -np ${p} ${BDIR}/laplace ${MAT[i]} ${DDIR}/m${MAT[i]} $1"
-  			mpirun -np ${p} ${BDIR}/laplace ${MAT[i]} ${DDIR}/m${MAT[i]} $1 >> ${ODIR}/bench_m${MAT[i]}
+			echo "mpirun -np ${p} ${BDIR}/laplace ${MAT[i]} ${DDIR}/m${MAT[i]} $1"
+			mpirun -np ${p} ${BDIR}/laplace ${MAT[i]} ${DDIR}/m${MAT[i]} $1 >> ${ODIR}/bench_m${MAT[i]}
 			echo  >> ${ODIR}/bench_m${MAT[i]}
 		fi
 	done
